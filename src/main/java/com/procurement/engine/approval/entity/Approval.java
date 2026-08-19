@@ -1,6 +1,7 @@
 package com.procurement.engine.approval.entity;
 
 import com.procurement.engine.procurement.entity.ProcurementRequest;
+import com.procurement.engine.procurement.entity.VendorOffer;
 import com.procurement.engine.user.entity.User;
 import jakarta.persistence.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -21,6 +22,10 @@ public class Approval {
     @JoinColumn(name = "procurement_id", nullable = false)
     private ProcurementRequest procurement;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "proposed_offer_id")
+    private VendorOffer proposedOffer;
+
     @Column(name = "requested_amount", nullable = false, precision = 15, scale = 2)
     private BigDecimal requestedAmount;
 
@@ -29,6 +34,9 @@ public class Approval {
 
     @Column(nullable = false, precision = 15, scale = 2)
     private BigDecimal difference;
+
+    @Column(name = "exception_type", length = 100)
+    private String exceptionType;
 
     @Column(nullable = false, length = 2000)
     private String reason;
@@ -53,12 +61,14 @@ public class Approval {
 
     public Approval() {}
 
-    public Approval(UUID id, ProcurementRequest procurement, BigDecimal requestedAmount, BigDecimal authorizationLimit, BigDecimal difference, String reason, ApprovalStatus status, Instant requestedAt, Instant decidedAt, User decidedBy, String comments) {
+    public Approval(UUID id, ProcurementRequest procurement, VendorOffer proposedOffer, BigDecimal requestedAmount, BigDecimal authorizationLimit, BigDecimal difference, String exceptionType, String reason, ApprovalStatus status, Instant requestedAt, Instant decidedAt, User decidedBy, String comments) {
         this.id = id;
         this.procurement = procurement;
+        this.proposedOffer = proposedOffer;
         this.requestedAmount = requestedAmount;
         this.authorizationLimit = authorizationLimit;
         this.difference = difference;
+        this.exceptionType = exceptionType;
         this.reason = reason;
         this.status = status != null ? status : ApprovalStatus.PENDING;
         this.requestedAt = requestedAt;
@@ -74,9 +84,11 @@ public class Approval {
     public static class Builder {
         private UUID id;
         private ProcurementRequest procurement;
+        private VendorOffer proposedOffer;
         private BigDecimal requestedAmount;
         private BigDecimal authorizationLimit;
         private BigDecimal difference;
+        private String exceptionType;
         private String reason;
         private ApprovalStatus status = ApprovalStatus.PENDING;
         private Instant requestedAt;
@@ -86,9 +98,11 @@ public class Approval {
 
         public Builder id(UUID id) { this.id = id; return this; }
         public Builder procurement(ProcurementRequest procurement) { this.procurement = procurement; return this; }
+        public Builder proposedOffer(VendorOffer proposedOffer) { this.proposedOffer = proposedOffer; return this; }
         public Builder requestedAmount(BigDecimal requestedAmount) { this.requestedAmount = requestedAmount; return this; }
         public Builder authorizationLimit(BigDecimal authorizationLimit) { this.authorizationLimit = authorizationLimit; return this; }
         public Builder difference(BigDecimal difference) { this.difference = difference; return this; }
+        public Builder exceptionType(String exceptionType) { this.exceptionType = exceptionType; return this; }
         public Builder reason(String reason) { this.reason = reason; return this; }
         public Builder status(ApprovalStatus status) { this.status = status; return this; }
         public Builder requestedAt(Instant requestedAt) { this.requestedAt = requestedAt; return this; }
@@ -97,7 +111,7 @@ public class Approval {
         public Builder comments(String comments) { this.comments = comments; return this; }
 
         public Approval build() {
-            return new Approval(id, procurement, requestedAmount, authorizationLimit, difference, reason, status, requestedAt, decidedAt, decidedBy, comments);
+            return new Approval(id, procurement, proposedOffer, requestedAmount, authorizationLimit, difference, exceptionType, reason, status, requestedAt, decidedAt, decidedBy, comments);
         }
     }
 
@@ -105,12 +119,16 @@ public class Approval {
     public void setId(UUID id) { this.id = id; }
     public ProcurementRequest getProcurement() { return procurement; }
     public void setProcurement(ProcurementRequest procurement) { this.procurement = procurement; }
+    public VendorOffer getProposedOffer() { return proposedOffer; }
+    public void setProposedOffer(VendorOffer proposedOffer) { this.proposedOffer = proposedOffer; }
     public BigDecimal getRequestedAmount() { return requestedAmount; }
     public void setRequestedAmount(BigDecimal requestedAmount) { this.requestedAmount = requestedAmount; }
     public BigDecimal getAuthorizationLimit() { return authorizationLimit; }
     public void setAuthorizationLimit(BigDecimal authorizationLimit) { this.authorizationLimit = authorizationLimit; }
     public BigDecimal getDifference() { return difference; }
     public void setDifference(BigDecimal difference) { this.difference = difference; }
+    public String getExceptionType() { return exceptionType; }
+    public void setExceptionType(String exceptionType) { this.exceptionType = exceptionType; }
     public String getReason() { return reason; }
     public void setReason(String reason) { this.reason = reason; }
     public ApprovalStatus getStatus() { return status; }

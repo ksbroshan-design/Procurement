@@ -112,8 +112,9 @@ public class RecommendationService {
             procurementRequestRepository.save(request);
         }
 
-        // 4. Evaluate whether an Exception Candidate provides superior TCO
+        // 4. Evaluate whether an Exception Candidate provides superior TCO (higher upfront price but lower projected TCO)
         boolean hasSuperiorException = topException != null
+                && topException.getPrice().compareTo(bestEligible.getPrice()) > 0
                 && topException.getTco().compareTo(bestEligible.getTco()) < 0;
 
         String recommendationType;
