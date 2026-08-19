@@ -64,6 +64,7 @@ public class ProcurementAuthorizationController {
      * Approves pending procurement decision and advances state to REVALIDATING.
      */
     @PostMapping("/{id}/approval/approve")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('PROCUREMENT_MANAGER', 'ADMIN')")
     public ResponseEntity<ApiResponse<ApprovalResponseDto>> approve(@PathVariable("id") UUID id,
                                                                    @RequestBody(required = false) ApprovalActionRequest requestPayload,
                                                                    Authentication authentication) {
@@ -77,6 +78,7 @@ public class ProcurementAuthorizationController {
      * Rejects pending procurement decision and advances state to REJECTED.
      */
     @PostMapping("/{id}/approval/reject")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('PROCUREMENT_MANAGER', 'ADMIN')")
     public ResponseEntity<ApiResponse<ApprovalResponseDto>> reject(@PathVariable("id") UUID id,
                                                                   @RequestBody(required = false) ApprovalActionRequest requestPayload,
                                                                   Authentication authentication) {
