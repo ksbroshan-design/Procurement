@@ -33,7 +33,7 @@ public class VendorOffer {
     @Column(name = "original_price", nullable = false, precision = 15, scale = 2)
     private BigDecimal originalPrice;
 
-    @Column(name = "negotiated_price", nullable = false, precision = 15, scale = 2)
+    @Column(name = "negotiated_price", precision = 15, scale = 2)
     private BigDecimal negotiatedPrice;
 
     @Column(name = "delivery_days", nullable = false)
@@ -45,7 +45,7 @@ public class VendorOffer {
     @Column(name = "warranty_years", nullable = false)
     private int warrantyYears;
 
-    @Column(name = "tco", nullable = false, precision = 15, scale = 2)
+    @Column(name = "tco", precision = 15, scale = 2)
     private BigDecimal tco;
 
     @Enumerated(EnumType.STRING)
