@@ -9,8 +9,17 @@ import java.math.BigDecimal;
 @ConfigurationProperties(prefix = "app.engine")
 public class EngineProperties {
 
+    private TcoProperties tco = new TcoProperties();
     private RevalidationProperties revalidation = new RevalidationProperties();
     private RankingProperties ranking = new RankingProperties();
+
+    public TcoProperties getTco() {
+        return tco;
+    }
+
+    public void setTco(TcoProperties tco) {
+        this.tco = tco;
+    }
 
     public RevalidationProperties getRevalidation() {
         return revalidation;
@@ -26,6 +35,37 @@ public class EngineProperties {
 
     public void setRanking(RankingProperties ranking) {
         this.ranking = ranking;
+    }
+
+    public static class TcoProperties {
+        private int horizonYears = 3;
+        private BigDecimal annualMaintenanceRate = new BigDecimal("0.02");
+        private BigDecimal onsiteWarrantyCoverage = new BigDecimal("0.95");
+        private BigDecimal onsiteDowntimeCoverage = new BigDecimal("0.40");
+        private BigDecimal standardWarrantyCoverage = new BigDecimal("0.80");
+        private BigDecimal limitedWarrantyCoverage = new BigDecimal("0.50");
+        private BigDecimal defaultFailureRate = new BigDecimal("0.05");
+        private BigDecimal defaultRepairCostFraction = new BigDecimal("0.15");
+        private BigDecimal defaultDowntimeCostFraction = new BigDecimal("0.05");
+
+        public int getHorizonYears() { return horizonYears; }
+        public void setHorizonYears(int horizonYears) { this.horizonYears = horizonYears; }
+        public BigDecimal getAnnualMaintenanceRate() { return annualMaintenanceRate; }
+        public void setAnnualMaintenanceRate(BigDecimal annualMaintenanceRate) { this.annualMaintenanceRate = annualMaintenanceRate; }
+        public BigDecimal getOnsiteWarrantyCoverage() { return onsiteWarrantyCoverage; }
+        public void setOnsiteWarrantyCoverage(BigDecimal onsiteWarrantyCoverage) { this.onsiteWarrantyCoverage = onsiteWarrantyCoverage; }
+        public BigDecimal getOnsiteDowntimeCoverage() { return onsiteDowntimeCoverage; }
+        public void setOnsiteDowntimeCoverage(BigDecimal onsiteDowntimeCoverage) { this.onsiteDowntimeCoverage = onsiteDowntimeCoverage; }
+        public BigDecimal getStandardWarrantyCoverage() { return standardWarrantyCoverage; }
+        public void setStandardWarrantyCoverage(BigDecimal standardWarrantyCoverage) { this.standardWarrantyCoverage = standardWarrantyCoverage; }
+        public BigDecimal getLimitedWarrantyCoverage() { return limitedWarrantyCoverage; }
+        public void setLimitedWarrantyCoverage(BigDecimal limitedWarrantyCoverage) { this.limitedWarrantyCoverage = limitedWarrantyCoverage; }
+        public BigDecimal getDefaultFailureRate() { return defaultFailureRate; }
+        public void setDefaultFailureRate(BigDecimal defaultFailureRate) { this.defaultFailureRate = defaultFailureRate; }
+        public BigDecimal getDefaultRepairCostFraction() { return defaultRepairCostFraction; }
+        public void setDefaultRepairCostFraction(BigDecimal defaultRepairCostFraction) { this.defaultRepairCostFraction = defaultRepairCostFraction; }
+        public BigDecimal getDefaultDowntimeCostFraction() { return defaultDowntimeCostFraction; }
+        public void setDefaultDowntimeCostFraction(BigDecimal defaultDowntimeCostFraction) { this.defaultDowntimeCostFraction = defaultDowntimeCostFraction; }
     }
 
     public static class RevalidationProperties {
