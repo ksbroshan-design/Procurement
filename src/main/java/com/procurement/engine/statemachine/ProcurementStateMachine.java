@@ -126,11 +126,24 @@ public class ProcurementStateMachine {
 
     private final ProcurementRequestRepository procurementRequestRepository;
     private final EngineProperties engineProperties;
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     public ProcurementStateMachine(ProcurementRequestRepository procurementRequestRepository,
                                    EngineProperties engineProperties) {
         this.procurementRequestRepository = procurementRequestRepository;
         this.engineProperties = engineProperties;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ProcurementStateMachine(ProcurementRequestRepository procurementRequestRepository,
+                                   EngineProperties engineProperties,
+                                   @org.springframework.beans.factory.annotation.Autowired(required = false) org.springframework.context.ApplicationEventPublisher eventPublisher) {
+        this.procurementRequestRepository = procurementRequestRepository;
+        this.engineProperties = engineProperties;
+        this.eventPublisher = eventPublisher;
+    }
+    public void setEventPublisher(org.springframework.context.ApplicationEventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -145,6 +158,18 @@ public class ProcurementStateMachine {
     }
 
     /**
+     * Asserts that a state transition is valid, throwing InvalidStateTransitionException otherwise.
+     */
+    public void validateTransition(ProcurementState from, ProcurementState to) {
+        if (!isValidTransition(from, to)) {
+            String msg = String.format("Invalid state transition from [%s] to [%s]. Allowed next states: %s",
+                    from, to, getValidNextStates(from));
+            log.warn(msg);
+            throw new InvalidStateTransitionException(from, to, msg);
+        }
+    }
+
+    /**
      * Returns the set of valid next states from the given state.
      */
     public Set<ProcurementState> getValidNextStates(ProcurementState current) {
@@ -152,18 +177,6 @@ public class ProcurementStateMachine {
             return Collections.emptySet();
         }
         return VALID_TRANSITIONS.getOrDefault(current, Collections.emptySet());
-    }
-
-    /**
-     * Validates that the transition is allowed, throwing {@link InvalidStateTransitionException} if not.
-     */
-    public void validateTransition(ProcurementState from, ProcurementState to) {
-        if (!isValidTransition(from, to)) {
-            String message = String.format("Invalid state transition from [%s] to [%s]. Allowed next states: %s",
-                    from, to, getValidNextStates(from));
-            log.warn(message);
-            throw new InvalidStateTransitionException(message);
-        }
     }
 
     /**
@@ -194,6 +207,10 @@ public class ProcurementStateMachine {
                 .timestamp(Instant.now())
                 .metadata(metadata != null ? metadata : Collections.emptyMap())
                 .build();
+
+        if (eventPublisher != null) {
+            eventPublisher.publishEvent(event);
+        }
 
         log.info("Transitioned procurement [{}] from [{}] to [{}] by [{}] - Reason: {}",
                 saved.getId(), previousState, targetState, actor, reason);
