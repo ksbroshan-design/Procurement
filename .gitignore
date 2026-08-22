@@ -1,0 +1,12 @@
+
+.idea/
+frontend/.env
+
+# Environment files
+.env
+**/.env
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
