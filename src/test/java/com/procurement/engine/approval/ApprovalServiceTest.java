@@ -57,12 +57,12 @@ class ApprovalServiceTest {
     }
 
     private ProcurementRequest createPendingApprovalProcurement() {
-        // Create request with low limit to force WAITING_APPROVAL
+        // 6 Dell laptops @ 78k = 468,000 > manager limit 450,000
         ProcurementRequest req = ProcurementRequest.builder()
                 .user(manager)
                 .category("Laptop")
-                .quantity(10)
-                .authorizationLimit(new BigDecimal("100000.00")) // Low limit
+                .quantity(6)
+                .authorizationLimit(new BigDecimal("450000.00"))
                 .status(ProcurementState.SUBMITTED)
                 .build();
 
@@ -72,6 +72,12 @@ class ApprovalServiceTest {
                 .value("16")
                 .mandatory(true)
                 .build());
+        req.addConstraint(ProcurementConstraint.builder()
+                .attribute("processor")
+                .operator(ConstraintOperator.EQUALS)
+                .value("Intel Core i7-1365U")
+                .mandatory(true)
+                .build());
 
         ProcurementRequest saved = procurementRequestRepository.save(req);
         discoveryService.discoverAndEvaluate(saved.getId());
@@ -79,9 +85,12 @@ class ApprovalServiceTest {
         return procurementRequestRepository.findById(saved.getId()).orElseThrow();
     }
 
+    @Autowired
+    private com.procurement.engine.purchase.repository.PurchaseOrderRepository purchaseOrderRepository;
+
     @Test
-    @DisplayName("Approves pending procurement decision and transitions state to REVALIDATING")
-    void testApproveTransitionsToRevalidating() {
+    @DisplayName("Approves pending procurement decision, resumes orchestration through REVALIDATING to COMPLETED with exactly 1 PurchaseOrder")
+    void testApproveTransitionsToRevalidatingAndCompletes() {
         ProcurementRequest request = createPendingApprovalProcurement();
         assertThat(request.getStatus()).isEqualTo(ProcurementState.WAITING_APPROVAL);
 
@@ -92,7 +101,12 @@ class ApprovalServiceTest {
         assertThat(response.getDecidedByName()).isEqualTo(manager.getName());
 
         ProcurementRequest updated = procurementRequestRepository.findById(request.getId()).orElseThrow();
-        assertThat(updated.getStatus()).isEqualTo(ProcurementState.REVALIDATING);
+        assertThat(updated.getStatus()).isEqualTo(ProcurementState.COMPLETED);
+
+        // Verify exactly one PurchaseOrder was created
+        List<com.procurement.engine.purchase.entity.PurchaseOrder> pos = purchaseOrderRepository.findByProcurementId(request.getId());
+        assertThat(pos).hasSize(1);
+        assertThat(pos.get(0).getStatus()).isEqualTo(com.procurement.engine.purchase.entity.PurchaseOrderStatus.CONFIRMED);
     }
 
     @Test
@@ -134,7 +148,7 @@ class ApprovalServiceTest {
     }
 
     @Test
-    @DisplayName("Replay protection: repeated approval or reject after decision is blocked")
+    @DisplayName("Replay protection: repeated approval or reject after decision is blocked and no duplicate purchase orders created")
     void testReplayProtection() {
         ProcurementRequest request = createPendingApprovalProcurement();
 
@@ -148,5 +162,9 @@ class ApprovalServiceTest {
         // Reject attempt on already approved decision must be blocked
         assertThatThrownBy(() -> approvalService.reject(request.getId(), ApprovalActionRequest.ofComments("Rejecting"), manager))
                 .isInstanceOf(ApprovalException.class);
+
+        // Ensure still exactly 1 PurchaseOrder
+        List<com.procurement.engine.purchase.entity.PurchaseOrder> pos = purchaseOrderRepository.findByProcurementId(request.getId());
+        assertThat(pos).hasSize(1);
     }
 }

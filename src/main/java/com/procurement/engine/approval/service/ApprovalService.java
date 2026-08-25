@@ -12,6 +12,7 @@ import com.procurement.engine.procurement.entity.ProcurementRequest;
 import com.procurement.engine.procurement.entity.VendorOffer;
 import com.procurement.engine.procurement.repository.ProcurementRequestRepository;
 import com.procurement.engine.procurement.repository.VendorOfferRepository;
+import com.procurement.engine.procurement.service.ProcurementOrchestrator;
 import com.procurement.engine.statemachine.ProcurementState;
 import com.procurement.engine.statemachine.ProcurementStateMachine;
 import com.procurement.engine.user.entity.User;
@@ -38,15 +39,18 @@ public class ApprovalService {
     private final ProcurementRequestRepository procurementRequestRepository;
     private final VendorOfferRepository vendorOfferRepository;
     private final ProcurementStateMachine stateMachine;
+    private final ProcurementOrchestrator procurementOrchestrator;
 
     public ApprovalService(ApprovalRepository approvalRepository,
                            ProcurementRequestRepository procurementRequestRepository,
                            VendorOfferRepository vendorOfferRepository,
-                           ProcurementStateMachine stateMachine) {
+                           ProcurementStateMachine stateMachine,
+                           ProcurementOrchestrator procurementOrchestrator) {
         this.approvalRepository = approvalRepository;
         this.procurementRequestRepository = procurementRequestRepository;
         this.vendorOfferRepository = vendorOfferRepository;
         this.stateMachine = stateMachine;
+        this.procurementOrchestrator = procurementOrchestrator;
     }
 
     /**
@@ -59,6 +63,18 @@ public class ApprovalService {
 
         return toDto(approval);
     }
+
+    /**
+     * Retrieves all pending approval records across all procurements.
+     */
+    @Transactional(readOnly = true)
+    public java.util.List<ApprovalResponseDto> getPendingApprovals() {
+        return approvalRepository.findByStatus(ApprovalStatus.PENDING)
+                .stream()
+                .map(this::toDto)
+                .toList();
+    }
+
 
     /**
      * Approves a pending procurement decision.
@@ -115,6 +131,9 @@ public class ApprovalService {
                 Map.of("approvalId", approval.getId().toString(), "approvedAmount", approval.getRequestedAmount().toString()));
 
         log.info("Procurement [{}] APPROVED by [{}]. Transitioned to REVALIDATING.", procurementId, approver != null ? approver.getEmail() : "MANAGER");
+
+        // Resume deterministic orchestration to advance REVALIDATING -> PURCHASING -> COMPLETED
+        procurementOrchestrator.orchestrate(procurementId);
 
         return toDto(approval);
     }

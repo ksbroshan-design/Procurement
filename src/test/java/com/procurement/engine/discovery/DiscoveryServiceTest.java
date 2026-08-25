@@ -234,7 +234,6 @@ class DiscoveryServiceTest {
             DiscoveryResult res = discoveryService.discoverAndEvaluate(req.getId());
             assertThat(res.getEligibleCandidatesCount()).isGreaterThan(0);
         }
-
         @Test
         @DisplayName("Works seamlessly for Keyboard")
         void testKeyboardDiscovery() {
@@ -243,6 +242,83 @@ class DiscoveryServiceTest {
             ));
             DiscoveryResult res = discoveryService.discoverAndEvaluate(req.getId());
             assertThat(res.getEligibleCandidatesCount()).isGreaterThan(0);
+        }
+    }
+
+    @Autowired
+    private com.procurement.engine.product.repository.ProductRepository productRepository;
+
+    @Nested
+    @DisplayName("Stock-Aware Candidate Eligibility Tests")
+    class StockAwareDiscoveryTests {
+
+        @Test
+        @DisplayName("Eligible product with sufficient stock is placed in eligibleOffers (Pool A)")
+        void testEligibleWithSufficientStockIncludedInPoolA() {
+            ProcurementRequest request = createProcurement("Laptop", 5, new BigDecimal("500000.00"), List.of(
+                    ProcurementConstraint.builder().attribute("ram").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("16").mandatory(true).build()
+            ));
+
+            DiscoveryResult result = discoveryService.discoverAndEvaluate(request.getId());
+
+            assertThat(result.getEligibleCandidatesCount()).isGreaterThan(0);
+            assertThat(result.getEligibleOffers()).allMatch(o -> o.getAvailableQuantity() >= 5);
+        }
+
+        @Test
+        @DisplayName("Product satisfying constraints but with insufficient stock is rejected from Pool A")
+        void testEligibleWithInsufficientStockExcludedFromPoolA() {
+            // Request quantity 100 which exceeds available stock of all individual products (max 40)
+            ProcurementRequest request = createProcurement("Laptop", 100, new BigDecimal("10000000.00"), List.of(
+                    ProcurementConstraint.builder().attribute("ram").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("16").mandatory(true).build()
+            ));
+
+            DiscoveryResult result = discoveryService.discoverAndEvaluate(request.getId());
+
+            assertThat(result.getEligibleCandidatesCount()).isEqualTo(0);
+            assertThat(result.getRejectedOffers()).isNotEmpty();
+            assertThat(result.getRejectedOffers()).allMatch(r -> r.getFailedConstraints().stream()
+                    .anyMatch(fc -> "availableQuantity".equals(fc.getAttribute())));
+        }
+
+        @Test
+        @DisplayName("Product satisfying constraints but with availability=false is rejected from Pool A")
+        void testEligibleWithAvailabilityFalseExcludedFromPoolA() {
+            List<com.procurement.engine.product.entity.Product> laptops = productRepository.findByCategoryIgnoreCase("Laptop");
+            for (com.procurement.engine.product.entity.Product p : laptops) {
+                if ("Lenovo ThinkPad T14s Gen 4".equals(p.getName())) {
+                    p.setAvailability(false);
+                    productRepository.save(p);
+                }
+            }
+
+            ProcurementRequest request = createProcurement("Laptop", 5, new BigDecimal("500000.00"), List.of(
+                    ProcurementConstraint.builder().attribute("ram").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("16").mandatory(true).build()
+            ));
+
+            DiscoveryResult result = discoveryService.discoverAndEvaluate(request.getId());
+
+            assertThat(result.getEligibleOffers()).noneMatch(o -> "Lenovo ThinkPad T14s Gen 4".equals(o.getProductName()));
+            assertThat(result.getRejectedOffers()).anyMatch(r -> "Lenovo ThinkPad T14s Gen 4".equals(r.getProductName()));
+        }
+
+        @Test
+        @DisplayName("When all candidate offers are out of stock, returns NO_ELIGIBLE_PRODUCTS")
+        void testAllOffersOutOfStockReturnsNoEligibleProducts() {
+            List<com.procurement.engine.product.entity.Product> laptops = productRepository.findByCategoryIgnoreCase("Laptop");
+            for (com.procurement.engine.product.entity.Product p : laptops) {
+                p.setAvailableQuantity(0);
+                p.setAvailability(false);
+                productRepository.save(p);
+            }
+
+            ProcurementRequest request = createProcurement("Laptop", 1, new BigDecimal("500000.00"), List.of());
+
+            DiscoveryResult result = discoveryService.discoverAndEvaluate(request.getId());
+
+            assertThat(result.getStatus()).isEqualTo("NO_ELIGIBLE_PRODUCTS");
+            assertThat(result.getEligibleCandidatesCount()).isEqualTo(0);
+            assertThat(result.getRejectedCandidatesCount()).isGreaterThan(0);
         }
     }
 }

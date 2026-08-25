@@ -42,6 +42,7 @@ public class ProcurementOrchestrator {
     private final RevalidationService revalidationService;
     private final PurchaseExecutionService purchaseExecutionService;
     private final AuditService auditService;
+    private final com.procurement.engine.statemachine.ProcurementStateMachine stateMachine;
 
     public ProcurementOrchestrator(ProcurementRequestRepository procurementRequestRepository,
                                    DiscoveryService discoveryService,
@@ -49,7 +50,8 @@ public class ProcurementOrchestrator {
                                    AuthorizationService authorizationService,
                                    RevalidationService revalidationService,
                                    PurchaseExecutionService purchaseExecutionService,
-                                   AuditService auditService) {
+                                   AuditService auditService,
+                                   com.procurement.engine.statemachine.ProcurementStateMachine stateMachine) {
         this.procurementRequestRepository = procurementRequestRepository;
         this.discoveryService = discoveryService;
         this.recommendationService = recommendationService;
@@ -57,6 +59,7 @@ public class ProcurementOrchestrator {
         this.revalidationService = revalidationService;
         this.purchaseExecutionService = purchaseExecutionService;
         this.auditService = auditService;
+        this.stateMachine = stateMachine;
     }
 
     /**
@@ -70,6 +73,43 @@ public class ProcurementOrchestrator {
         ProcurementState initialState = request.getStatus();
         log.info("Starting deterministic orchestration for procurement [{}] in state [{}]", procurementId, initialState);
 
+        // Fast-path return if already in terminal or intervention-resting state
+        if (request.getStatus() == ProcurementState.COMPLETED) {
+            log.info("Procurement [{}] is already COMPLETED. Returning existing completion result.", procurementId);
+            return OrchestrationResultDto.builder()
+                    .procurementId(procurementId)
+                    .initialState(initialState)
+                    .finalState(ProcurementState.COMPLETED)
+                    .status("COMPLETED")
+                    .decisionMessage("Procurement already completed")
+                    .recommendationType("AUTONOMOUS_PURCHASE_READY")
+                    .build();
+        }
+
+        if (request.getStatus() == ProcurementState.REJECTED) {
+            log.info("Procurement [{}] is in terminal REJECTED state. Stopping workflow.", procurementId);
+            return OrchestrationResultDto.builder()
+                    .procurementId(procurementId)
+                    .initialState(initialState)
+                    .finalState(ProcurementState.REJECTED)
+                    .status("REJECTED")
+                    .decisionMessage("Procurement request was rejected by manager.")
+                    .recommendationType("NONE")
+                    .build();
+        }
+
+        if (request.getStatus() == ProcurementState.WAITING_USER) {
+            log.info("Procurement [{}] is in WAITING_USER state. Stopping workflow.", procurementId);
+            return OrchestrationResultDto.builder()
+                    .procurementId(procurementId)
+                    .initialState(initialState)
+                    .finalState(ProcurementState.WAITING_USER)
+                    .status("WAITING_USER")
+                    .decisionMessage("Human review required to adjust constraints.")
+                    .recommendationType("NO_RECOMMENDATION")
+                    .build();
+        }
+
         // Step 1: Discover & Normalize (if in early submitted / validating / searching states)
         if (request.getStatus() == ProcurementState.SUBMITTED
                 || request.getStatus() == ProcurementState.VALIDATING
@@ -77,13 +117,13 @@ public class ProcurementOrchestrator {
             com.procurement.engine.discovery.model.DiscoveryResult discovery = discoveryService.discoverAndEvaluate(procurementId);
             request = refresh(procurementId);
 
-            if ("NO_ELIGIBLE_PRODUCTS".equals(discovery.getStatus()) || discovery.getEligibleCandidatesCount() == 0) {
-                log.info("Procurement [{}] produced 0 eligible offers. Stopping workflow.", procurementId);
+            if ("NO_DISCOVERY_RESULTS".equals(discovery.getStatus()) || discovery.getRawCandidatesCount() == 0) {
+                log.info("Procurement [{}] produced 0 raw candidates. Stopping workflow.", procurementId);
                 return OrchestrationResultDto.builder()
                         .procurementId(procurementId)
                         .initialState(initialState)
                         .finalState(request.getStatus())
-                        .status("NO_ELIGIBLE_PRODUCTS")
+                        .status("NO_DISCOVERY_RESULTS")
                         .decisionMessage(discovery.getMessage())
                         .recommendationType("NO_RECOMMENDATION")
                         .build();
@@ -100,11 +140,17 @@ public class ProcurementOrchestrator {
 
             if ("NO_RECOMMENDATION".equals(recommendation.getRecommendationType())) {
                 log.warn("Procurement [{}] produced NO_RECOMMENDATION: {}", procurementId, recommendation.getExplanation());
+                if (request.getStatus() == ProcurementState.RECOMMENDED) {
+                    stateMachine.transition(request, ProcurementState.WAITING_USER, "ORCHESTRATOR",
+                            "No compliant offers available. Human review required.",
+                            Map.of("recommendationType", "NO_RECOMMENDATION"));
+                    request = refresh(procurementId);
+                }
                 return OrchestrationResultDto.builder()
                         .procurementId(procurementId)
                         .initialState(initialState)
                         .finalState(request.getStatus())
-                        .status("NO_RECOMMENDATION")
+                        .status("NO_ELIGIBLE_PRODUCTS")
                         .decisionMessage(recommendation.getExplanation())
                         .recommendationType(recommendation.getRecommendationType())
                         .build();

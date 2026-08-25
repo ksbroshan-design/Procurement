@@ -66,10 +66,11 @@ public class TcoService {
         ProcurementRequest request = procurementRequestRepository.findById(procurementId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProcurementRequest not found with id: " + procurementId));
 
-        // If offers not yet discovered, run discovery first
+        // If offers not yet discovered or request is in early state, run discovery first
         List<VendorOffer> offers = vendorOfferRepository.findByProcurementId(procurementId);
-        if (offers.isEmpty()) {
+        if (offers.isEmpty() || request.getStatus() == ProcurementState.SUBMITTED || request.getStatus() == ProcurementState.VALIDATING || request.getStatus() == ProcurementState.SEARCHING) {
             discoveryService.discoverAndEvaluate(procurementId);
+            request = procurementRequestRepository.findById(procurementId).orElseThrow();
             offers = vendorOfferRepository.findByProcurementId(procurementId);
         }
 

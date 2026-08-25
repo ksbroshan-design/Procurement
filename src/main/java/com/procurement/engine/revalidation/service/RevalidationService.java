@@ -46,6 +46,7 @@ public class RevalidationService {
     private final ProductRepository productRepository;
     private final VendorOfferRepository vendorOfferRepository;
     private final ApprovalRepository approvalRepository;
+    private final com.procurement.engine.authorization.service.EffectiveAuthorizationResolver effectiveAuthorizationResolver;
 
     public RevalidationService(ConstraintService constraintService,
                                ProcurementStateMachine stateMachine,
@@ -53,7 +54,8 @@ public class RevalidationService {
                                ProcurementRequestRepository procurementRequestRepository,
                                ProductRepository productRepository,
                                VendorOfferRepository vendorOfferRepository,
-                               ApprovalRepository approvalRepository) {
+                               ApprovalRepository approvalRepository,
+                               com.procurement.engine.authorization.service.EffectiveAuthorizationResolver effectiveAuthorizationResolver) {
         this.constraintService = constraintService;
         this.stateMachine = stateMachine;
         this.engineProperties = engineProperties;
@@ -61,6 +63,7 @@ public class RevalidationService {
         this.productRepository = productRepository;
         this.vendorOfferRepository = vendorOfferRepository;
         this.approvalRepository = approvalRepository;
+        this.effectiveAuthorizationResolver = effectiveAuthorizationResolver;
     }
 
     /**
@@ -231,20 +234,6 @@ public class RevalidationService {
     }
 
     private BigDecimal resolveAuthorizedLimit(ProcurementRequest request) {
-        // If an approval was granted for an exception amount, that amount is the approved limit
-        Optional<Approval> approvalOpt = approvalRepository.findTopByProcurementIdOrderByRequestedAtDesc(request.getId());
-        if (approvalOpt.isPresent() && approvalOpt.get().getStatus() == ApprovalStatus.APPROVED) {
-            return approvalOpt.get().getRequestedAmount();
-        }
-
-        if (request.getAuthorizationLimit() != null && request.getAuthorizationLimit().compareTo(BigDecimal.ZERO) > 0) {
-            return request.getAuthorizationLimit();
-        }
-
-        if (request.getUser() != null && request.getUser().getAuthorizationLimit() != null) {
-            return request.getUser().getAuthorizationLimit();
-        }
-
-        return new BigDecimal("500000.00");
+        return effectiveAuthorizationResolver.resolveEffectiveLimit(request);
     }
 }
