@@ -153,11 +153,12 @@ class ProcurementEndToEndIntegrationTest {
     @DisplayName("TEST 2 — HUMAN APPROVAL PATH: Exceeding limit escalates to WAITING_APPROVAL, manager approves -> COMPLETED")
     void test2_HumanApprovalPath() {
         List<ProcurementConstraint> constraints = List.of(
-                ProcurementConstraint.builder().attribute("ram").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("16").mandatory(true).build()
+                ProcurementConstraint.builder().attribute("ram").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("16").mandatory(true).build(),
+                ProcurementConstraint.builder().attribute("processor").operator(ConstraintOperator.EQUALS).value("Intel Core i7-1365U").mandatory(true).build()
         );
 
-        // Request 10 laptops with low budget of 200,000 to force WAITING_APPROVAL
-        ProcurementRequest req = createRequest("Laptop", 10, new BigDecimal("200000.00"), constraints);
+        // Request 6 Dell laptops (6 * 78,000 = 468,000 > 450,000 manager limit) to force WAITING_APPROVAL
+        ProcurementRequest req = createRequest("Laptop", 6, new BigDecimal("450000.00"), constraints);
 
         OrchestrationResultDto step1 = orchestrator.orchestrate(req.getId());
         assertThat(step1.getStatus()).isEqualTo("WAITING_APPROVAL");
@@ -170,19 +171,21 @@ class ProcurementEndToEndIntegrationTest {
         Approval approval = approvalRepository.findTopByProcurementIdOrderByRequestedAtDesc(req.getId()).orElseThrow();
         assertThat(approval.getStatus()).isEqualTo(ApprovalStatus.PENDING);
 
-        // Manager approves
+        // Manager approves (automatically resumes orchestration to completion)
         approvalService.approve(req.getId(), ApprovalActionRequest.ofComments("Approved by Finance VP"), manager);
 
         ProcurementRequest postApprove = procurementRequestRepository.findById(req.getId()).orElseThrow();
-        assertThat(postApprove.getStatus()).isEqualTo(ProcurementState.REVALIDATING);
+        assertThat(postApprove.getStatus()).isEqualTo(ProcurementState.COMPLETED);
 
-        // Resume orchestration
+        // Resume orchestration idempotency check
         OrchestrationResultDto step2 = orchestrator.orchestrate(req.getId());
         assertThat(step2.getStatus()).isEqualTo("COMPLETED");
         assertThat(step2.getFinalState()).isEqualTo(ProcurementState.COMPLETED);
 
         // Verify PO created
-        PurchaseOrder po = purchaseOrderRepository.findById(step2.getPurchaseOrderId()).orElseThrow();
+        List<PurchaseOrder> pos = purchaseOrderRepository.findByProcurementId(req.getId());
+        assertThat(pos).hasSize(1);
+        PurchaseOrder po = pos.get(0);
         assertThat(po.getStatus()).isEqualTo(PurchaseOrderStatus.CONFIRMED);
     }
 
@@ -394,5 +397,189 @@ class ProcurementEndToEndIntegrationTest {
         ProcurementAuditResponse audit = auditService.getAuditTrail(req.getId());
         assertThat(audit.getEvents()).isNotEmpty();
         assertThat(audit.getEvents().stream().anyMatch(e -> e.getEventType() == AuditEventType.STATE_TRANSITION)).isTrue();
+    }
+
+    @org.junit.jupiter.api.Nested
+    @DisplayName("State Synchronization & Authoritative Database State Machine Regression Tests (A - G)")
+    class StateSynchronizationAndAuthoritativeLifecycleRegressionTests {
+
+        @Test
+        @DisplayName("A. Discovery successfully finding candidates cannot leave procurement stuck in SEARCHING")
+        void testA_DiscoveryFindingCandidates_CannotLeaveStuckInSearching() {
+            List<ProcurementConstraint> constraints = List.of(
+                    ProcurementConstraint.builder().attribute("screenSize").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("55").mandatory(true).build()
+            );
+
+            ProcurementRequest req = createRequest("TV", 1, new BigDecimal("300000.00"), constraints);
+            assertThat(req.getStatus()).isEqualTo(ProcurementState.SUBMITTED);
+
+            DiscoveryResult discovery = discoveryService.discoverAndEvaluate(req.getId());
+            assertThat(discovery.getRawCandidatesCount()).isGreaterThan(0);
+
+            ProcurementRequest inDb = procurementRequestRepository.findById(req.getId()).orElseThrow();
+            assertThat(inDb.getStatus()).isEqualTo(ProcurementState.EVALUATING);
+            assertThat(inDb.getStatus()).isNotEqualTo(ProcurementState.SEARCHING);
+        }
+
+        @Test
+        @DisplayName("B. After orchestration finishes successfully, persisted procurement state matches actual lifecycle stage")
+        void testB_AfterOrchestration_PersistedStateMatchesLifecycleStage() {
+            List<ProcurementConstraint> constraints = List.of(
+                    ProcurementConstraint.builder().attribute("screenSize").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("55").mandatory(true).build()
+            );
+
+            ProcurementRequest req = createRequest("TV", 1, new BigDecimal("300000.00"), constraints);
+
+            OrchestrationResultDto result = orchestrator.orchestrate(req.getId());
+
+            ProcurementRequest inDb = procurementRequestRepository.findById(req.getId()).orElseThrow();
+            assertThat(inDb.getStatus()).isEqualTo(result.getFinalState());
+            assertThat(inDb.getStatus()).isEqualTo(ProcurementState.COMPLETED);
+        }
+
+        @Test
+        @DisplayName("C. A procurement with a valid over-budget candidate reaches WAITING_APPROVAL rather than remaining SEARCHING")
+        void testC_OverBudgetCandidate_ReachesWaitingApprovalNotSearching() {
+            User employee = userRepository.findByEmail("user@procurement.com").orElseThrow();
+            assertThat(employee.getAuthorizationLimit()).isEqualByComparingTo("50000.00");
+
+            List<ProcurementConstraint> constraints = List.of(
+                    ProcurementConstraint.builder().attribute("screenSize").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("55").mandatory(true).build(),
+                    ProcurementConstraint.builder().attribute("panelType").operator(ConstraintOperator.EQUALS).value("OLED").mandatory(true).build()
+            );
+
+            ProcurementRequest req = ProcurementRequest.builder()
+                    .user(employee)
+                    .category("TV")
+                    .quantity(1)
+                    .authorizationLimit(new BigDecimal("50000.00"))
+                    .status(ProcurementState.SUBMITTED)
+                    .build();
+            constraints.forEach(req::addConstraint);
+            ProcurementRequest saved = procurementRequestRepository.save(req);
+
+            OrchestrationResultDto result = orchestrator.orchestrate(saved.getId());
+
+            ProcurementRequest inDb = procurementRequestRepository.findById(saved.getId()).orElseThrow();
+            assertThat(inDb.getStatus()).isEqualTo(ProcurementState.WAITING_APPROVAL);
+            assertThat(inDb.getStatus()).isNotEqualTo(ProcurementState.SEARCHING);
+            assertThat(result.getFinalState()).isEqualTo(ProcurementState.WAITING_APPROVAL);
+            assertThat(result.getRecommendationType()).isEqualTo("REQUIRES_AUTHORIZATION");
+        }
+
+        @Test
+        @DisplayName("D. A procurement within authorization limit can progress through to COMPLETED")
+        void testD_WithinLimit_ProgressesToCompleted() {
+            List<ProcurementConstraint> constraints = List.of(
+                    ProcurementConstraint.builder().attribute("screenSize").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("55").mandatory(true).build()
+            );
+
+            ProcurementRequest req = createRequest("TV", 1, new BigDecimal("450000.00"), constraints);
+
+            OrchestrationResultDto result = orchestrator.orchestrate(req.getId());
+
+            ProcurementRequest inDb = procurementRequestRepository.findById(req.getId()).orElseThrow();
+            assertThat(inDb.getStatus()).isEqualTo(ProcurementState.COMPLETED);
+            assertThat(result.getFinalState()).isEqualTo(ProcurementState.COMPLETED);
+
+            List<PurchaseOrder> orders = purchaseOrderRepository.findByProcurementId(req.getId());
+            assertThat(orders).hasSize(1);
+            assertThat(orders.get(0).getStatus()).isEqualTo(PurchaseOrderStatus.CONFIRMED);
+        }
+
+        @Test
+        @DisplayName("E. Demo 4 approval still works: WAITING_APPROVAL -> APPROVED -> REVALIDATING -> PURCHASING -> COMPLETED")
+        void testE_Demo4ApprovalWorkflow_ReachesCompleted() {
+            User employee = userRepository.findByEmail("user@procurement.com").orElseThrow();
+            List<ProcurementConstraint> constraints = List.of(
+                    ProcurementConstraint.builder().attribute("screenSize").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("55").mandatory(true).build(),
+                    ProcurementConstraint.builder().attribute("panelType").operator(ConstraintOperator.EQUALS).value("OLED").mandatory(true).build()
+            );
+
+            ProcurementRequest req = ProcurementRequest.builder()
+                    .user(employee)
+                    .category("TV")
+                    .quantity(1)
+                    .authorizationLimit(new BigDecimal("50000.00"))
+                    .status(ProcurementState.SUBMITTED)
+                    .build();
+            constraints.forEach(req::addConstraint);
+            ProcurementRequest saved = procurementRequestRepository.save(req);
+
+            // Step 1: Orchestrate to WAITING_APPROVAL
+            orchestrator.orchestrate(saved.getId());
+            ProcurementRequest waiting = procurementRequestRepository.findById(saved.getId()).orElseThrow();
+            assertThat(waiting.getStatus()).isEqualTo(ProcurementState.WAITING_APPROVAL);
+
+            // Step 2: Manager Approves
+            approvalService.approve(saved.getId(), ApprovalActionRequest.ofComments("Approved budget override"), manager);
+
+            // Step 3: Check reached COMPLETED
+            ProcurementRequest completed = procurementRequestRepository.findById(saved.getId()).orElseThrow();
+            assertThat(completed.getStatus()).isEqualTo(ProcurementState.COMPLETED);
+
+            List<PurchaseOrder> orders = purchaseOrderRepository.findByProcurementId(saved.getId());
+            assertThat(orders).hasSize(1);
+            assertThat(orders.get(0).getStatus()).isEqualTo(PurchaseOrderStatus.CONFIRMED);
+        }
+
+        @Test
+        @DisplayName("F. No duplicate PurchaseOrder is created")
+        void testF_NoDuplicatePurchaseOrder() {
+            List<ProcurementConstraint> constraints = List.of(
+                    ProcurementConstraint.builder().attribute("screenSize").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("55").mandatory(true).build()
+            );
+
+            ProcurementRequest req = createRequest("TV", 1, new BigDecimal("450000.00"), constraints);
+
+            // Initial orchestration to COMPLETED
+            orchestrator.orchestrate(req.getId());
+            List<PurchaseOrder> orders1 = purchaseOrderRepository.findByProcurementId(req.getId());
+            assertThat(orders1).hasSize(1);
+
+            // Repeated orchestrate calls
+            orchestrator.orchestrate(req.getId());
+            purchaseExecutionService.executePurchase(req.getId());
+
+            List<PurchaseOrder> orders2 = purchaseOrderRepository.findByProcurementId(req.getId());
+            assertThat(orders2).hasSize(1);
+            assertThat(orders2.get(0).getId()).isEqualTo(orders1.get(0).getId());
+        }
+
+        @Test
+        @DisplayName("G. Database procurement status equals actual orchestration state at every sequential stage")
+        void testG_SequentialStateTransitions_AuthoritativeInDb() {
+            List<ProcurementConstraint> constraints = List.of(
+                    ProcurementConstraint.builder().attribute("screenSize").operator(ConstraintOperator.GREATER_THAN_OR_EQUAL).value("55").mandatory(true).build()
+            );
+
+            ProcurementRequest req = createRequest("TV", 1, new BigDecimal("450000.00"), constraints);
+            assertThat(req.getStatus()).isEqualTo(ProcurementState.SUBMITTED);
+
+            // 1. Discovery -> EVALUATING
+            discoveryService.discoverAndEvaluate(req.getId());
+            ProcurementRequest s1 = procurementRequestRepository.findById(req.getId()).orElseThrow();
+            assertThat(s1.getStatus()).isEqualTo(ProcurementState.EVALUATING);
+
+            // 2. TCO Analysis & Recommendation -> RECOMMENDED
+            recommendationService.generateRecommendation(req.getId());
+            ProcurementRequest s2 = procurementRequestRepository.findById(req.getId()).orElseThrow();
+            assertThat(s2.getStatus()).isEqualTo(ProcurementState.RECOMMENDED);
+
+            // 3. Authorization Check -> REVALIDATING
+            authorizationService.checkAuthorization(req.getId());
+            ProcurementRequest s3 = procurementRequestRepository.findById(req.getId()).orElseThrow();
+            assertThat(s3.getStatus()).isEqualTo(ProcurementState.REVALIDATING);
+
+            // 4. Revalidation -> PURCHASING
+            revalidationService.revalidate(req.getId());
+            ProcurementRequest s4 = procurementRequestRepository.findById(req.getId()).orElseThrow();
+            assertThat(s4.getStatus()).isEqualTo(ProcurementState.PURCHASING);
+
+            // 5. Purchase Execution -> COMPLETED
+            purchaseExecutionService.executePurchase(req.getId());
+            ProcurementRequest s5 = procurementRequestRepository.findById(req.getId()).orElseThrow();
+            assertThat(s5.getStatus()).isEqualTo(ProcurementState.COMPLETED);
+        }
     }
 }

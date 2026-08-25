@@ -47,6 +47,17 @@ public class ProcurementLifecycleController {
     }
 
     /**
+     * GET /api/procurements
+     * Retrieves all procurement requests ordered by creation timestamp.
+     */
+    @GetMapping
+    public ResponseEntity<ApiResponse<java.util.List<ProcurementSummaryDto>>> listProcurements() {
+        java.util.List<ProcurementSummaryDto> list = procurementService.getAllProcurements();
+        return ResponseEntity.ok(ApiResponse.success("Procurement requests retrieved", list));
+    }
+
+
+    /**
      * GET /api/procurements/{id}
      * Retrieves status and summary of a procurement request safely within a transactional boundary.
      */

@@ -163,6 +163,18 @@ public class PurchaseExecutionService {
         return toDto(po);
     }
 
+    /**
+     * Retrieves all purchase orders ordered by creation timestamp descending.
+     */
+    @Transactional(readOnly = true)
+    public java.util.List<PurchaseOrderDto> getAllPurchaseOrders() {
+        return purchaseOrderRepository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"))
+                .stream()
+                .map(this::toDto)
+                .toList();
+    }
+
+
     private PurchaseExecutionResultDto toExecutionResult(PurchaseOrder po, String status, String message) {
         return new PurchaseExecutionResultDto(
                 po.getId(),

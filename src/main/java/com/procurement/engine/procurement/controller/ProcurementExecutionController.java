@@ -66,4 +66,15 @@ public class ProcurementExecutionController {
         PurchaseOrderDto po = purchaseExecutionService.getPurchaseOrder(id);
         return ResponseEntity.ok(ApiResponse.success("Purchase order retrieved", po));
     }
+
+    /**
+     * GET /api/procurements/purchase-orders
+     * Retrieves all confirmed purchase orders.
+     */
+    @GetMapping("/purchase-orders")
+    public ResponseEntity<ApiResponse<java.util.List<PurchaseOrderDto>>> getAllPurchaseOrders() {
+        java.util.List<PurchaseOrderDto> pos = purchaseExecutionService.getAllPurchaseOrders();
+        return ResponseEntity.ok(ApiResponse.success("Purchase orders retrieved", pos));
+    }
 }
+

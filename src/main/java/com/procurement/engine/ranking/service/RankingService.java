@@ -39,17 +39,20 @@ public class RankingService {
     private final EngineProperties engineProperties;
     private final ProcurementRequestRepository procurementRequestRepository;
     private final VendorOfferRepository vendorOfferRepository;
+    private final com.procurement.engine.authorization.service.EffectiveAuthorizationResolver effectiveAuthorizationResolver;
 
     public RankingService(TcoService tcoService,
                           ConstraintService constraintService,
                           EngineProperties engineProperties,
                           ProcurementRequestRepository procurementRequestRepository,
-                          VendorOfferRepository vendorOfferRepository) {
+                          VendorOfferRepository vendorOfferRepository,
+                          com.procurement.engine.authorization.service.EffectiveAuthorizationResolver effectiveAuthorizationResolver) {
         this.tcoService = tcoService;
         this.constraintService = constraintService;
         this.engineProperties = engineProperties;
         this.procurementRequestRepository = procurementRequestRepository;
         this.vendorOfferRepository = vendorOfferRepository;
+        this.effectiveAuthorizationResolver = effectiveAuthorizationResolver;
     }
 
     /**
@@ -90,13 +93,29 @@ public class RankingService {
             }
         }
 
+        // Resolve authoritative effective authorization limit
+        BigDecimal effectiveLimit = effectiveAuthorizationResolver.resolveEffectiveLimit(request);
+
         // 3. Separate into Pool A (Eligible) and Pool B (Exception)
+        // Pool A admission requires:
+        // - All mandatory hard constraints pass
+        // - Product is available with sufficient inventory
+        // - Total purchase cost <= effective authorization limit
         List<TcoBreakdownDto> poolA = new ArrayList<>();
         List<TcoBreakdownDto> poolB = new ArrayList<>();
+        int requestedQuantity = request.getQuantity();
 
         for (TcoBreakdownDto breakdown : allBreakdowns) {
             ProductConstraintEvaluation eval = evalMap.get(breakdown.getOfferId());
-            boolean isEligible = eval != null && eval.isEligible();
+            VendorOffer offer = offerMap.get(breakdown.getOfferId());
+            Product product = offer != null ? offer.getProduct() : null;
+
+            int availableStock = product != null ? product.getAvailableQuantity() : (offer != null ? offer.getAvailableQuantity() : 0);
+            boolean isAvailable = product != null ? (product.isAvailability() && availableStock >= requestedQuantity)
+                    : (availableStock >= requestedQuantity);
+
+            boolean withinLimit = breakdown.getTotalPurchaseCost().compareTo(effectiveLimit) <= 0;
+            boolean isEligible = eval != null && eval.isEligible() && isAvailable && withinLimit;
             if (isEligible) {
                 poolA.add(breakdown);
             } else {
@@ -108,10 +127,10 @@ public class RankingService {
         Bounds bounds = computeBounds(allBreakdowns);
 
         // 5. Score and Rank Pool A (Eligible)
-        List<RankedOfferDto> rankedEligible = scoreAndRankPool(poolA, bounds, offerMap, evalMap, request.getAuthorizationLimit(), false);
+        List<RankedOfferDto> rankedEligible = scoreAndRankPool(poolA, bounds, offerMap, evalMap, effectiveLimit, false);
 
         // 6. Score and Rank Pool B (Exception)
-        List<RankedOfferDto> rankedException = scoreAndRankPool(poolB, bounds, offerMap, evalMap, request.getAuthorizationLimit(), true);
+        List<RankedOfferDto> rankedException = scoreAndRankPool(poolB, bounds, offerMap, evalMap, effectiveLimit, true);
 
         RankedOfferDto topEligible = rankedEligible.isEmpty() ? null : rankedEligible.get(0);
         RankedOfferDto topException = rankedException.isEmpty() ? null : rankedException.get(0);
@@ -223,6 +242,15 @@ public class RankingService {
 
         // Sort descending by totalScore (tie-breakers: lower TCO, then lower price, then higher reliability)
         scoredList.sort((a, b) -> {
+            if (isException) {
+                ProductConstraintEvaluation evalA = evalMap.get(a.getOfferId());
+                ProductConstraintEvaluation evalB = evalMap.get(b.getOfferId());
+                boolean aCompliant = a.isBudgetExceeded() && evalA != null && evalA.isEligible();
+                boolean bCompliant = b.isBudgetExceeded() && evalB != null && evalB.isEligible();
+                if (aCompliant != bCompliant) {
+                    return aCompliant ? -1 : 1;
+                }
+            }
             int cmp = b.getTotalScore().compareTo(a.getTotalScore());
             if (cmp != 0) return cmp;
             int tcoCmp = a.getTco().compareTo(b.getTco());

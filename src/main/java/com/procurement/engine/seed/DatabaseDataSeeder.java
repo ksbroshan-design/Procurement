@@ -69,6 +69,16 @@ public class DatabaseDataSeeder implements CommandLineRunner {
     }
 
     private void seedUsers() {
+        User regularUser = User.builder()
+                .name("John Doe (Standard Employee)")
+                .email("user@procurement.com")
+
+                .password(passwordEncoder.encode("password123"))
+                .role(Role.USER)
+                .authorizationLimit(new BigDecimal("50000.00"))
+                .build();
+        userRepository.save(regularUser);
+
         User manager = User.builder()
                 .name("Alex Hunter (Procurement Manager)")
                 .email("manager@procurement.com")
@@ -87,6 +97,9 @@ public class DatabaseDataSeeder implements CommandLineRunner {
                 .build();
         userRepository.save(admin);
     }
+
+
+
 
     private Map<String, Vendor> seedVendors() {
         Map<String, Vendor> vendors = new HashMap<>();

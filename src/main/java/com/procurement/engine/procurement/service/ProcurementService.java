@@ -17,8 +17,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+
 
 /**
  * Service for Procurement Request lifecycle management and transactional DTO mapping.
@@ -97,7 +99,19 @@ public class ProcurementService {
         return toSummaryDto(request);
     }
 
+    /**
+     * Retrieves all procurement requests ordered by creation timestamp descending.
+     */
+    @Transactional(readOnly = true)
+    public List<ProcurementSummaryDto> getAllProcurements() {
+        return procurementRequestRepository.findAll(org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"))
+                .stream()
+                .map(this::toSummaryDto)
+                .toList();
+    }
+
     private ProcurementSummaryDto toSummaryDto(ProcurementRequest r) {
+
         VendorOffer selectedOffer = r.getSelectedOffer();
         Product selectedProduct = r.getSelectedProduct();
         Vendor selectedVendor = (selectedOffer != null) ? selectedOffer.getVendor() : null;

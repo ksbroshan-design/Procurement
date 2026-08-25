@@ -109,6 +109,11 @@ public class DiscoveryService {
         // 3. Handle zero raw candidates
         if (rawCandidates.isEmpty()) {
             log.info("No raw candidates discovered for category [{}] in procurement [{}]", category, procurementId);
+            if (request.getStatus() == ProcurementState.SEARCHING) {
+                stateMachine.transition(request, ProcurementState.WAITING_USER, "DISCOVERY_SERVICE",
+                        "No candidate products discovered from any vendor source for category '" + category + "'.",
+                        Map.of("category", category));
+            }
             return new DiscoveryResult(
                     procurementId,
                     category,
@@ -142,10 +147,13 @@ public class DiscoveryService {
 
             VendorOffer offer = createOrUpdateVendorOffer(request, vendor, product, normalized);
 
-            // 6. Evaluate with Phase 2 Constraint Engine
+            // 6. Evaluate with Phase 2 Constraint Engine & Inventory Stock Check
             ProductConstraintEvaluation evaluation = constraintService.evaluateProduct(product, constraints);
 
-            if (evaluation.isEligible()) {
+            int availableStock = product != null ? product.getAvailableQuantity() : 0;
+            boolean hasSufficientStock = product != null && product.isAvailability() && availableStock >= quantity;
+
+            if (evaluation.isEligible() && hasSufficientStock) {
                 CandidateOfferDto offerDto = CandidateOfferDto.builder()
                         .offerId(offer.getId())
                         .productId(product.getId())
@@ -184,13 +192,24 @@ public class DiscoveryService {
                         ));
                     }
                 }
+                if (!hasSufficientStock) {
+                    failedDetails.add(new RejectionDiagnosticDto.FailedConstraintDetail(
+                            "availableQuantity",
+                            ConstraintOperator.GREATER_THAN_OR_EQUAL,
+                            String.valueOf(quantity),
+                            String.valueOf(availableStock),
+                            product != null && product.isAvailability()
+                                    ? String.format("Insufficient inventory stock: %d units available (required: %d)", availableStock, quantity)
+                                    : "Product is out of stock or unavailable in vendor catalog"
+                    ));
+                }
 
                 RejectionDiagnosticDto rejectionDto = new RejectionDiagnosticDto(
-                        product.getId(),
+                        product != null ? product.getId() : null,
                         offer.getId(),
-                        product.getName(),
+                        product != null ? product.getName() : normalized.getName(),
                         vendor != null ? vendor.getName() : normalized.getVendorName(),
-                        product.getCategory(),
+                        product != null ? product.getCategory() : normalized.getCategory(),
                         offer.getOriginalPrice(),
                         failedDetails
                 );
@@ -198,26 +217,19 @@ public class DiscoveryService {
             }
         }
 
-        // 7. Determine status and transition state to EVALUATING if candidates were processed
-        String outcomeStatus;
-        String message;
+        // 7. Determine status and advance state to EVALUATING
+        String outcomeStatus = eligibleOffers.isEmpty() ? "NO_ELIGIBLE_PRODUCTS" : "SUCCESS";
+        String message = eligibleOffers.isEmpty()
+                ? "Candidate products were discovered, but none satisfied mandatory hard constraints."
+                : String.format("Discovery and constraint evaluation completed: %d eligible, %d rejected.", eligibleOffers.size(), rejectedOffers.size());
 
-        if (eligibleOffers.isEmpty()) {
-            outcomeStatus = "NO_ELIGIBLE_PRODUCTS";
-            message = "Candidate products were discovered, but none satisfied mandatory hard constraints.";
-            log.info("Procurement [{}] produced 0 eligible offers and {} rejected offers.", procurementId, rejectedOffers.size());
-        } else {
-            outcomeStatus = "SUCCESS";
-            message = String.format("Discovery and constraint evaluation completed: %d eligible, %d rejected.",
-                    eligibleOffers.size(), rejectedOffers.size());
-            log.info("Procurement [{}] successfully evaluated {} eligible offers.", procurementId, eligibleOffers.size());
+        log.info("Procurement [{}] discovery completed: {} eligible offers, {} rejected offers.", procurementId, eligibleOffers.size(), rejectedOffers.size());
 
-            // Transition state to EVALUATING
-            if (request.getStatus() == ProcurementState.SEARCHING) {
-                stateMachine.transition(request, ProcurementState.EVALUATING, "DISCOVERY_SERVICE",
-                        "Discovered and evaluated candidates",
-                        Map.of("eligibleOffers", eligibleOffers.size(), "rejectedOffers", rejectedOffers.size()));
-            }
+        // Advance state from SEARCHING to EVALUATING
+        if (request.getStatus() == ProcurementState.SEARCHING) {
+            stateMachine.transition(request, ProcurementState.EVALUATING, "DISCOVERY_SERVICE",
+                    "Discovered and evaluated candidates",
+                    Map.of("rawCandidates", rawCandidates.size(), "eligibleOffers", eligibleOffers.size(), "rejectedOffers", rejectedOffers.size()));
         }
 
         return new DiscoveryResult(

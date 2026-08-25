@@ -60,6 +60,18 @@ public class ProcurementAuthorizationController {
     }
 
     /**
+     * GET /api/procurements/approvals/pending
+     * Returns all pending human-in-the-loop approvals.
+     */
+    @GetMapping("/approvals/pending")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('PROCUREMENT_MANAGER', 'ADMIN')")
+    public ResponseEntity<ApiResponse<java.util.List<ApprovalResponseDto>>> getPendingApprovals() {
+        java.util.List<ApprovalResponseDto> pending = approvalService.getPendingApprovals();
+        return ResponseEntity.ok(ApiResponse.success("Pending approvals retrieved", pending));
+    }
+
+
+    /**
      * POST /api/procurements/{id}/approval/approve
      * Approves pending procurement decision and advances state to REVALIDATING.
      */

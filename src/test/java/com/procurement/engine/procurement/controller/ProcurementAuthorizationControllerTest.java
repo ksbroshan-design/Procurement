@@ -59,12 +59,12 @@ class ProcurementAuthorizationControllerTest {
     void setUp() {
         User manager = userRepository.findByEmail("manager@procurement.com").orElseThrow();
 
-        // High quantity + low limit to trigger WAITING_APPROVAL
+        // High quantity to exceed manager limit (10 * 56k = 560k > 450k)
         ProcurementRequest req = ProcurementRequest.builder()
                 .user(manager)
                 .category("TV")
-                .quantity(5)
-                .authorizationLimit(new BigDecimal("100000.00")) // Total will be ~280k > 100k
+                .quantity(10)
+                .authorizationLimit(new BigDecimal("100000.00"))
                 .status(ProcurementState.SUBMITTED)
                 .build();
 
@@ -72,6 +72,12 @@ class ProcurementAuthorizationControllerTest {
                 .attribute("screenSize")
                 .operator(ConstraintOperator.GREATER_THAN_OR_EQUAL)
                 .value("55")
+                .mandatory(true)
+                .build());
+        req.addConstraint(ProcurementConstraint.builder()
+                .attribute("panelType")
+                .operator(ConstraintOperator.EQUALS)
+                .value("OLED")
                 .mandatory(true)
                 .build());
 
